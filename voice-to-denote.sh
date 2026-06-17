@@ -2,6 +2,13 @@
 set -euo pipefail
 
 AUDIO_FILE="${1:-$KMVAR_TriggerValue}"
+
+# Only process audio files
+case "${AUDIO_FILE##*.}" in
+  m4a|mp3|wav|aiff|aac|ogg|flac|opus) ;;
+  *) echo "Skipping non-audio file: $AUDIO_FILE" && exit 0 ;;
+esac
+
 NOTES_DIR="$HOME/notes"
 TODO_FILE="$HOME/notes/todo.org"
 UPCOMING_FILE="$HOME/notes/upcoming.org"
