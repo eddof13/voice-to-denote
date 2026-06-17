@@ -50,14 +50,28 @@
 				<key>Triggers</key>
 				<array>
 					<dict>
+						<key>ExecuteType</key>
+						<string>Launch</string>
 						<key>MacroTriggerType</key>
-						<string>EngineLaunch</string>
+						<string>Time</string>
 					</dict>
 					<dict>
+						<key>ExecuteType</key>
+						<string>While</string>
 						<key>MacroTriggerType</key>
-						<string>Periodic</string>
-						<key>Period</key>
-						<real>1800</real>
+						<string>Time</string>
+						<key>RepeatTime</key>
+						<integer>1800</integer>
+						<key>TimeFinishHour</key>
+						<integer>23</integer>
+						<key>TimeFinishMinutes</key>
+						<integer>30</integer>
+						<key>TimeHour</key>
+						<integer>0</integer>
+						<key>TimeMinutes</key>
+						<integer>0</integer>
+						<key>WhichDays</key>
+						<integer>127</integer>
 					</dict>
 				</array>
 				<key>UID</key>
