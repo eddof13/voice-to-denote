@@ -16,30 +16,45 @@ CLAUDE="/opt/homebrew/bin/claude"
 JQ="/usr/bin/jq"
 LOG="$HOME/.voice-to-denote.log"
 TODAY=$(date +%Y-%m-%d)
+PROCESSING_DIR="$HOME/voice_notes/.processing"
+PROCESSED_DIR="$HOME/voice_notes/processed"
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
+# Atomically claim the file by moving it to .processing.
+# If it's already in .processing (came from sweeper retry), process it directly.
+# If mv fails, another process already claimed it — exit cleanly.
+mkdir -p "$PROCESSING_DIR"
+if [[ "$(dirname "$(realpath "$AUDIO_FILE")")" != "$(realpath "$PROCESSING_DIR")" ]]; then
+  CLAIMED="$PROCESSING_DIR/$(basename "$AUDIO_FILE")"
+  if ! mv "$AUDIO_FILE" "$CLAIMED" 2>/dev/null; then
+    log "Skipping $(basename "$AUDIO_FILE") — already claimed by another process"
+    exit 0
+  fi
+  AUDIO_FILE="$CLAIMED"
+fi
+
 log "Processing: $(basename "$AUDIO_FILE")"
 
-# Transcribe
+# Transcribe — on failure, leave file in .processing for sweeper to retry
 TMPWORK=$(mktemp -d)
 trap 'rm -rf "$TMPWORK"' EXIT
 
 if ! whisper "$AUDIO_FILE" --output_format txt --output_dir "$TMPWORK" --model base.en 2>/dev/null; then
-  log "ERROR: Whisper failed on $(basename "$AUDIO_FILE")"
+  log "ERROR: Whisper failed — $(basename "$AUDIO_FILE") left in .processing for retry"
   exit 1
 fi
 
 TRANSCRIPT_FILE="$TMPWORK/$(basename "${AUDIO_FILE%.*}").txt"
 if [[ ! -f "$TRANSCRIPT_FILE" ]]; then
-  log "ERROR: Transcript file not found for $(basename "$AUDIO_FILE")"
+  log "ERROR: Transcript file not found — $(basename "$AUDIO_FILE") left in .processing for retry"
   exit 1
 fi
 TRANSCRIPT=$(cat "$TRANSCRIPT_FILE")
 
-# Build prompt — static part single-quoted, today's date and transcript appended
+# Build prompt
 PROMPT_FILE=$(mktemp)
 cat > "$PROMPT_FILE" << STATIC
 Classify and structure a voice transcript into one of three types: note, task, or reminder.
@@ -75,7 +90,7 @@ RESPONSE=$("$CLAUDE" -p "$(cat "$PROMPT_FILE")" 2>/dev/null) || true
 rm "$PROMPT_FILE"
 
 if ! "$JQ" . <<< "$RESPONSE" >/dev/null 2>&1; then
-  log "WARNING: Claude returned invalid JSON, saving raw transcript"
+  log "WARNING: Claude returned invalid JSON — saving raw transcript"
   TIMESTAMP=$(date +%Y%m%dT%H%M%S)
   FILENAME="${TIMESTAMP}--voice-note-raw__unprocessed.org"
   printf '#+title: Voice Note (unprocessed)\n#+date: [%s]\n#+filetags: :unprocessed:\n#+identifier: %s\n\n%s\n' \
@@ -83,7 +98,7 @@ if ! "$JQ" . <<< "$RESPONSE" >/dev/null 2>&1; then
     > "$NOTES_DIR/$FILENAME"
   log "Fallback note: $NOTES_DIR/$FILENAME"
   echo "Fallback note: $NOTES_DIR/$FILENAME"
-  osascript -e "tell application \"Finder\" to delete POSIX file \"$(realpath "$AUDIO_FILE")\""
+  mkdir -p "$PROCESSED_DIR" && mv "$AUDIO_FILE" "$PROCESSED_DIR/"
   exit 0
 fi
 
@@ -92,9 +107,7 @@ TYPE=$("$JQ" -r '.type' <<< "$RESPONSE")
 TITLE=$("$JQ" -r '.title' <<< "$RESPONSE")
 CONTENT=$("$JQ" -r '.content' <<< "$RESPONSE")
 
-# Move audio to Trash
-osascript -e "tell application \"Finder\" to delete POSIX file \"$(realpath "$AUDIO_FILE")\""
-
+# Write output FIRST — trash audio only after successful write
 if [[ "$TYPE" == "note" ]]; then
   TAGS_SLUG=$("$JQ" -r '.tags | join("_")' <<< "$RESPONSE")
   FILETAGS=$("$JQ" -r '[""] + .tags + [""] | join(":")' <<< "$RESPONSE")
@@ -112,7 +125,7 @@ if [[ "$TYPE" == "note" ]]; then
 elif [[ "$TYPE" == "task" ]]; then
   touch "$TODO_FILE"
   printf '\n* TODO %s\n%s\n' "$TITLE" "$CONTENT" >> "$TODO_FILE"
-  log "Task added to todo.org: $TITLE"
+  log "Task added: $TITLE"
   echo "Task added: $TODO_FILE"
 
 elif [[ "$TYPE" == "reminder" ]]; then
@@ -124,6 +137,8 @@ elif [[ "$TYPE" == "reminder" ]]; then
   else
     printf '\n* TODO %s\n%s\n' "$TITLE" "$CONTENT" >> "$UPCOMING_FILE"
   fi
-  log "Reminder added to upcoming.org: $TITLE"
+  log "Reminder added: $TITLE"
   echo "Reminder added: $UPCOMING_FILE"
 fi
+
+mkdir -p "$PROCESSED_DIR" && mv "$AUDIO_FILE" "$PROCESSED_DIR/"
