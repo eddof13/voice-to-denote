@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pick an active Forge project, open Terminal running claude there,
-# and output the project name so the KM macro can copy the session-start text.
+# Pick an active Forge project, open Terminal running claude with the
+# session-start prompt, and output the project name for the KM macro.
 set -euo pipefail
 
 FORGE_DIR="$HOME/forge/Active Projects"
@@ -12,7 +12,7 @@ while IFS= read -r -d '' dir; do
 done < <(find "$FORGE_DIR" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z || true)
 
 if [[ ${#PROJECTS[@]} -eq 0 ]]; then
-  osascript -e 'display alert "No active projects in ~/forge/Active Projects"'
+  osascript -e 'display alert "No active projects in ~/forge/Active Projects"' > /dev/null 2>&1
   exit 1
 fi
 
@@ -30,10 +30,16 @@ if [[ "$CHOICE" == "false" ]] || [[ -z "$CHOICE" ]]; then
   exit 1
 fi
 
-# Open new Terminal window running claude at the project path
 PROJECT_PATH="$FORGE_DIR/$CHOICE"
-osascript -e "tell application \"Terminal\" to do script \"cd '$PROJECT_PATH' && claude\""
-osascript -e "tell application \"Terminal\" to activate"
+SESSION_PROMPT="Project: ${CHOICE}. Read STATUS. Where did we leave off?"
 
-# Output chosen name for KM to use in the session-start text
+# Open Terminal running claude with the session-start prompt; suppress AppleScript return value
+osascript > /dev/null 2>&1 << APPLESCRIPT
+tell application "Terminal"
+  do script "cd '${PROJECT_PATH}' && claude '${SESSION_PROMPT}'"
+  activate
+end tell
+APPLESCRIPT
+
+# Output chosen name for KM notification variable
 echo "$CHOICE"

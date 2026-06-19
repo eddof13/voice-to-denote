@@ -55,42 +55,14 @@
 					<dict>
 						<key>ActionUID</key>
 						<integer>3</integer>
-						<key>IncludeStdErr</key>
-						<false/>
-						<key>IncludedVariables</key>
-						<array>
-							<string>9999</string>
-						</array>
-						<key>MacroActionType</key>
-						<string>ExecuteShellScript</string>
-						<key>NotifyOnFailure</key>
-						<false/>
-						<key>StopOnFailure</key>
-						<false/>
-						<key>Text</key>
-						<string>printf 'Project: %s.\nRead STATUS.\nWhere did we leave off?' "$KMVAR_ForgeProject" | pbcopy</string>
-						<key>TimeOutAbortsMacro</key>
-						<true/>
-						<key>TimeOutSeconds</key>
-						<integer>10</integer>
-						<key>TrimResults</key>
-						<true/>
-						<key>TrimResultsNew</key>
-						<true/>
-						<key>UseText</key>
-						<true/>
-					</dict>
-					<dict>
-						<key>ActionUID</key>
-						<integer>4</integer>
 						<key>MacroActionType</key>
 						<string>Notification</string>
 						<key>SoundName</key>
 						<string></string>
 						<key>Subtitle</key>
-						<string>Paste to start session</string>
+						<string>Session started</string>
 						<key>Text</key>
-						<string>Paste to start session</string>
+						<string>Session started</string>
 						<key>Title</key>
 						<string>Forge: %Variable%ForgeProject%</string>
 					</dict>
