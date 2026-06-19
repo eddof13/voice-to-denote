@@ -104,8 +104,7 @@
 						<key>MacroActionType</key>
 						<string>InsertText</string>
 						<key>Text</key>
-						<string>Update STATUS.
-Log today in Notes.</string>
+						<string>Update STATUS. Log today in Notes.</string>
 					</dict>
 					<dict>
 						<key>ActionUID</key>
