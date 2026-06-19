@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pick an active Forge project, open Terminal running claude with the
-# session-start prompt, and output the project name for the KM macro.
+# session-start prompt, and set the KM variable ForgeProject directly.
 set -euo pipefail
 
 FORGE_DIR="$HOME/forge/Active Projects"
@@ -33,13 +33,13 @@ fi
 PROJECT_PATH="$FORGE_DIR/$CHOICE"
 SESSION_PROMPT="Project: ${CHOICE}. Read STATUS. Where did we leave off?"
 
-# Open Terminal running claude with the session-start prompt; suppress AppleScript return value
+# Set the KM variable directly — no stdout, no results window
+osascript -e "tell application \"Keyboard Maestro Engine\" to setvariable \"ForgeProject\" to \"${CHOICE}\"" > /dev/null 2>&1
+
+# Open Terminal running claude with the session-start prompt
 osascript > /dev/null 2>&1 << APPLESCRIPT
 tell application "Terminal"
   do script "cd '${PROJECT_PATH}' && claude '${SESSION_PROMPT}'"
   activate
 end tell
 APPLESCRIPT
-
-# Output chosen name for KM notification variable
-echo "$CHOICE"
