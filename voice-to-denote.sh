@@ -57,22 +57,24 @@ TRANSCRIPT=$(cat "$TRANSCRIPT_FILE")
 # Build prompt
 PROMPT_FILE=$(mktemp)
 cat > "$PROMPT_FILE" << STATIC
-Classify and structure a voice transcript into one of three types: note, task, or reminder.
+Classify and structure a voice transcript into one of four types: note, task, reminder, or project.
 
 Classification rules:
 - task: explicit prefix "TODO" or "task" OR sounds like something to do/investigate/follow up on
 - reminder: explicit prefix "REMIND ME" or "reminder" OR mentions a specific date/time with an action
+- project: speaker is explicitly starting or naming a new project ("new project", "start a project", "I'm building", "create a project for")
 - note: everything else — thoughts, ideas, reference info, observations
 
 Respond with valid JSON only — no markdown fences, no explanation, nothing else.
 
 Schema:
 {
-  "type": "note" | "task" | "reminder",
+  "type": "note" | "task" | "reminder" | "project",
   "title": "3-7 word plain English title, no punctuation",
   "tags": ["tag1", "tag2"],
   "content": "cleaned up well-structured prose from the transcript",
-  "scheduled_date": "YYYY-MM-DD or null — only for reminders, infer from transcript"
+  "scheduled_date": "YYYY-MM-DD or null — only for reminders, infer from transcript",
+  "project_name": "2-5 word title case name for the project folder, only when type is project, otherwise null"
 }
 
 Rules:
@@ -139,6 +141,53 @@ elif [[ "$TYPE" == "reminder" ]]; then
   fi
   log "Reminder added: $TITLE"
   echo "Reminder added: $UPCOMING_FILE"
+
+elif [[ "$TYPE" == "project" ]]; then
+  PROJECT_NAME=$("$JQ" -r '.project_name // empty' <<< "$RESPONSE")
+  [[ -z "$PROJECT_NAME" ]] && PROJECT_NAME="$TITLE"
+  FORGE_DIR="$HOME/forge/Active Projects/$PROJECT_NAME"
+  mkdir -p "$FORGE_DIR/Drafts" "$FORGE_DIR/Assets" "$FORGE_DIR/Outputs"
+
+  {
+    printf '# %s\n\n%s\n\n' "$PROJECT_NAME" "$CONTENT"
+    cat << 'TMPL'
+## Where things live
+
+| File / Folder | What's in it |
+|---|---|
+| `STATUS.md` | Current state — what's in progress, what's blocked, what's next |
+| `Steps.md` | The plan — ordered tasks and milestones |
+| `Notes.md` | Decisions, constraints, references, context that informs the work |
+| `Drafts/` | Work in progress |
+| `Assets/` | Source material |
+| `Outputs/` | Final deliverables |
+
+## Which file to read first
+
+- **Starting a new session** → `STATUS.md`, then `Steps.md`
+- **Writing or editing content** → `Notes.md`, then `Drafts/`
+- **Looking for source material** → `Assets/`
+- **Checking what's done** → `Outputs/`
+
+## How to work here
+
+- Read `STATUS.md` before asking what to do next — it should answer that.
+- Save finished work to `Outputs/`, not `Drafts/`.
+- Log significant decisions in `Notes.md` so they survive across sessions.
+- Update `STATUS.md` at the end of each session.
+TMPL
+  } > "$FORGE_DIR/CLAUDE.md"
+
+  printf '# Status\n\n**Last updated:** %s\n\n## In progress\n_Nothing yet._\n\n## Blocked\n_Nothing._\n\n## Up next\n_See Steps.md._\n\n## Recently completed\n_Nothing yet._\n' \
+    "$(date +%Y-%m-%d)" > "$FORGE_DIR/STATUS.md"
+
+  printf '# Plan\n\nSteps in order. Check off as done.\n\n_Add steps here._\n' > "$FORGE_DIR/Steps.md"
+
+  printf '# Notes\n\nDecisions, constraints, and context that inform the work.\n\n## Voice note (%s)\n%s\n' \
+    "$(date '+%Y-%m-%d')" "$CONTENT" > "$FORGE_DIR/Notes.md"
+
+  log "Project scaffolded: $FORGE_DIR"
+  echo "Project created: $PROJECT_NAME"
 fi
 
 mkdir -p "$PROCESSED_DIR" && mv "$AUDIO_FILE" "$PROCESSED_DIR/"
