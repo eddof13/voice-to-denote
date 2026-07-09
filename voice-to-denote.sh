@@ -12,16 +12,131 @@ esac
 NOTES_DIR="$HOME/notes"
 TODO_FILE="$HOME/notes/todo.org"
 UPCOMING_FILE="$HOME/notes/upcoming.org"
-CLAUDE="/opt/homebrew/bin/claude"
-JQ="/usr/bin/jq"
+JQ="${JQ:-/usr/bin/jq}"
 LOG="$HOME/.voice-to-denote.log"
 TODAY=$(date +%Y-%m-%d)
 PROCESSING_DIR="$HOME/voice_notes/.processing"
 PROCESSED_DIR="$HOME/voice_notes/processed"
 
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# LLM backend: auto | claude | grok
+# Override with VOICE_TO_DENOTE_LLM. auto = first available (claude, then grok).
+VOICE_TO_DENOTE_LLM="${VOICE_TO_DENOTE_LLM:-auto}"
+
+export PATH="$HOME/.local/bin:$HOME/.grok/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+
+find_bin() {
+  local name="$1"
+  command -v "$name" 2>/dev/null || true
+}
+
+resolve_llm() {
+  local prefer="${VOICE_TO_DENOTE_LLM:-auto}"
+  prefer=$(echo "$prefer" | tr '[:upper:]' '[:lower:]')
+  local claude_bin grok_bin
+  claude_bin=$(find_bin claude)
+  grok_bin=$(find_bin grok)
+
+  case "$prefer" in
+    claude)
+      if [[ -z "$claude_bin" ]]; then
+        log "ERROR: VOICE_TO_DENOTE_LLM=claude but claude CLI not found"
+        return 1
+      fi
+      echo "claude|$claude_bin"
+      ;;
+    grok)
+      if [[ -z "$grok_bin" ]]; then
+        log "ERROR: VOICE_TO_DENOTE_LLM=grok but grok CLI not found"
+        return 1
+      fi
+      echo "grok|$grok_bin"
+      ;;
+    auto|"")
+      if [[ -n "$claude_bin" ]]; then
+        echo "claude|$claude_bin"
+      elif [[ -n "$grok_bin" ]]; then
+        echo "grok|$grok_bin"
+      else
+        log "ERROR: no LLM CLI found (install claude and/or grok)"
+        return 1
+      fi
+      ;;
+    *)
+      log "ERROR: unknown VOICE_TO_DENOTE_LLM='$prefer' (use auto|claude|grok)"
+      return 1
+      ;;
+  esac
+}
+
+# Call the selected LLM with a prompt file; print model text to stdout.
+# Both backends are used headless / single-turn — no tools needed for classify.
+call_llm() {
+  local backend="$1"
+  local bin="$2"
+  local prompt_file="$3"
+
+  case "$backend" in
+    claude)
+      # -p/--print: non-interactive; prompt as argument
+      "$bin" -p "$(cat "$prompt_file")" 2>/dev/null
+      ;;
+    grok)
+      # --prompt-file: headless single-turn; plain text to stdout
+      "$bin" \
+        --prompt-file "$prompt_file" \
+        --output-format plain \
+        --no-subagents \
+        --disable-web-search \
+        --max-turns 1 \
+        2>/dev/null
+      ;;
+    *)
+      log "ERROR: unsupported backend '$backend'"
+      return 1
+      ;;
+  esac
+}
+
+# If the model wraps JSON in fences or prose, pull out the first JSON object.
+extract_json() {
+  local raw="$1"
+  if "$JQ" . <<< "$raw" >/dev/null 2>&1; then
+    printf '%s' "$raw"
+    return 0
+  fi
+  # Strip ```json ... ``` or ``` ... ```
+  local stripped
+  stripped=$(printf '%s' "$raw" | sed -e 's/^```[a-zA-Z]*//' -e 's/```$//' | sed '/^```/d')
+  if "$JQ" . <<< "$stripped" >/dev/null 2>&1; then
+    printf '%s' "$stripped"
+    return 0
+  fi
+  # Greedy first {...} block
+  local obj
+  obj=$(printf '%s' "$raw" | python3 -c '
+import sys, re, json
+text = sys.stdin.read()
+# find outermost object by brace scan
+start = text.find("{")
+if start < 0:
+    sys.exit(1)
+depth = 0
+for i, ch in enumerate(text[start:], start):
+    if ch == "{":
+        depth += 1
+    elif ch == "}":
+        depth -= 1
+        if depth == 0:
+            chunk = text[start:i+1]
+            json.loads(chunk)
+            print(chunk)
+            sys.exit(0)
+sys.exit(1)
+' 2>/dev/null) || return 1
+  printf '%s' "$obj"
+}
 
 # Atomically claim the file by moving it to .processing.
 # If it's already in .processing (came from sweeper retry), process it directly.
@@ -37,6 +152,14 @@ if [[ "$(dirname "$(realpath "$AUDIO_FILE")")" != "$(realpath "$PROCESSING_DIR")
 fi
 
 log "Processing: $(basename "$AUDIO_FILE")"
+
+if ! LLM_SPEC=$(resolve_llm); then
+  log "ERROR: LLM resolve failed — $(basename "$AUDIO_FILE") left in .processing for retry"
+  exit 1
+fi
+LLM_BACKEND="${LLM_SPEC%%|*}"
+LLM_BIN="${LLM_SPEC#*|}"
+log "Using LLM backend: $LLM_BACKEND ($LLM_BIN)"
 
 # Transcribe — on failure, leave file in .processing for sweeper to retry
 TMPWORK=$(mktemp -d)
@@ -87,12 +210,14 @@ Transcript:
 STATIC
 printf '%s' "$TRANSCRIPT" >> "$PROMPT_FILE"
 
-# Call Claude — fall back to raw note on invalid JSON
-RESPONSE=$("$CLAUDE" -p "$(cat "$PROMPT_FILE")" 2>/dev/null) || true
-rm "$PROMPT_FILE"
+# Call LLM — fall back to raw note on invalid JSON
+RAW_RESPONSE=$(call_llm "$LLM_BACKEND" "$LLM_BIN" "$PROMPT_FILE") || true
+rm -f "$PROMPT_FILE"
 
-if ! "$JQ" . <<< "$RESPONSE" >/dev/null 2>&1; then
-  log "WARNING: Claude returned invalid JSON — saving raw transcript"
+RESPONSE=$(extract_json "$RAW_RESPONSE" 2>/dev/null) || RESPONSE=""
+
+if [[ -z "$RESPONSE" ]] || ! "$JQ" . <<< "$RESPONSE" >/dev/null 2>&1; then
+  log "WARNING: $LLM_BACKEND returned invalid JSON — saving raw transcript"
   TIMESTAMP=$(date +%Y%m%dT%H%M%S)
   FILENAME="${TIMESTAMP}--voice-note-raw__unprocessed.org"
   printf '#+title: Voice Note (unprocessed)\n#+date: [%s]\n#+filetags: :unprocessed:\n#+identifier: %s\n\n%s\n' \
@@ -121,13 +246,13 @@ if [[ "$TYPE" == "note" ]]; then
     "$TITLE" "$(date '+%Y-%m-%d %a %H:%M')" "$FILETAGS" "$TIMESTAMP" "$CONTENT" \
     > "$NOTES_DIR/$FILENAME"
 
-  log "Note created: $FILENAME"
+  log "Note created: $FILENAME (via $LLM_BACKEND)"
   echo "Note created: $NOTES_DIR/$FILENAME"
 
 elif [[ "$TYPE" == "task" ]]; then
   touch "$TODO_FILE"
   printf '\n* TODO %s\n%s\n' "$TITLE" "$CONTENT" >> "$TODO_FILE"
-  log "Task added: $TITLE"
+  log "Task added: $TITLE (via $LLM_BACKEND)"
   echo "Task added: $TODO_FILE"
 
 elif [[ "$TYPE" == "reminder" ]]; then
@@ -139,7 +264,7 @@ elif [[ "$TYPE" == "reminder" ]]; then
   else
     printf '\n* TODO %s\n%s\n' "$TITLE" "$CONTENT" >> "$UPCOMING_FILE"
   fi
-  log "Reminder added: $TITLE"
+  log "Reminder added: $TITLE (via $LLM_BACKEND)"
   echo "Reminder added: $UPCOMING_FILE"
 
 elif [[ "$TYPE" == "project" ]]; then
@@ -148,13 +273,21 @@ elif [[ "$TYPE" == "project" ]]; then
   FORGE_DIR="$HOME/forge/Active Projects/$PROJECT_NAME"
   mkdir -p "$FORGE_DIR/Drafts" "$FORGE_DIR/Assets" "$FORGE_DIR/Outputs"
 
+  # Model-agnostic pointer: AGENTS.md canonical, CLAUDE.md symlink for Claude Code.
   {
     printf '# %s\n\n%s\n\n' "$PROJECT_NAME" "$CONTENT"
     cat << 'TMPL'
+## Which AI is reading this
+
+This pointer file is **model-agnostic**. Same contract for Claude, Grok, or another
+agent. Canonical filename is `AGENTS.md`. `CLAUDE.md` is a symlink to this file so
+Claude Code auto-load still works.
+
 ## Where things live
 
 | File / Folder | What's in it |
 |---|---|
+| `AGENTS.md` | This pointer — first thing to read every session (`CLAUDE.md` → same file) |
 | `STATUS.md` | Current state — what's in progress, what's blocked, what's next |
 | `Steps.md` | The plan — ordered tasks and milestones |
 | `Notes.md` | Decisions, constraints, references, context that informs the work |
@@ -173,20 +306,22 @@ elif [[ "$TYPE" == "project" ]]; then
 
 - Read `STATUS.md` before asking what to do next — it should answer that.
 - Save finished work to `Outputs/`, not `Drafts/`.
-- Log significant decisions in `Notes.md` so they survive across sessions.
+- Log significant decisions in `Notes.md` (newest at top) so they survive across sessions.
 - Update `STATUS.md` at the end of each session.
+- Do not assume memory between sessions or across models — the files are the only shared memory.
 TMPL
-  } > "$FORGE_DIR/CLAUDE.md"
+  } > "$FORGE_DIR/AGENTS.md"
+  ln -sfn AGENTS.md "$FORGE_DIR/CLAUDE.md"
 
   printf '# Status\n\n**Last updated:** %s\n\n## In progress\n_Nothing yet._\n\n## Blocked\n_Nothing._\n\n## Up next\n_See Steps.md._\n\n## Recently completed\n_Nothing yet._\n' \
     "$(date +%Y-%m-%d)" > "$FORGE_DIR/STATUS.md"
 
   printf '# Plan\n\nSteps in order. Check off as done.\n\n_Add steps here._\n' > "$FORGE_DIR/Steps.md"
 
-  printf '# Notes\n\nDecisions, constraints, and context that inform the work.\n\n## Voice note (%s)\n%s\n' \
+  printf '# Notes\n\nDecisions, constraints, and context that inform the work. Newest at top.\n\n## Voice note (%s)\n%s\n' \
     "$(date '+%Y-%m-%d')" "$CONTENT" > "$FORGE_DIR/Notes.md"
 
-  log "Project scaffolded: $FORGE_DIR"
+  log "Project scaffolded: $FORGE_DIR (via $LLM_BACKEND)"
   echo "Project created: $PROJECT_NAME"
 fi
 
