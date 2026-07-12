@@ -273,21 +273,21 @@ elif [[ "$TYPE" == "project" ]]; then
   FORGE_DIR="$HOME/forge/Active Projects/$PROJECT_NAME"
   mkdir -p "$FORGE_DIR/Drafts" "$FORGE_DIR/Assets" "$FORGE_DIR/Outputs"
 
-  # Model-agnostic pointer: AGENTS.md canonical, CLAUDE.md symlink for Claude Code.
+  # Agent-agnostic pointer: AGENTS.md only (no CLAUDE.md, no symlinks — MegaSync).
   {
     printf '# %s\n\n%s\n\n' "$PROJECT_NAME" "$CONTENT"
     cat << 'TMPL'
 ## Which AI is reading this
 
-This pointer file is **model-agnostic**. Same contract for Claude, Grok, or another
-agent. Canonical filename is `AGENTS.md`. `CLAUDE.md` is a symlink to this file so
-Claude Code auto-load still works.
+This pointer file is **agent-agnostic**. Same contract for Claude, Grok, or another
+agent. The sole pointer filename is `AGENTS.md` — no `CLAUDE.md`, no symlinks
+(MegaSync cannot sync them). Session start always reads this file by name.
 
 ## Where things live
 
 | File / Folder | What's in it |
 |---|---|
-| `AGENTS.md` | This pointer — first thing to read every session (`CLAUDE.md` → same file) |
+| `AGENTS.md` | This pointer — first thing to read every session |
 | `STATUS.md` | Current state — what's in progress, what's blocked, what's next |
 | `Steps.md` | The plan — ordered tasks and milestones |
 | `Notes.md` | Decisions, constraints, references, context that informs the work |
@@ -311,7 +311,6 @@ Claude Code auto-load still works.
 - Do not assume memory between sessions or across models — the files are the only shared memory.
 TMPL
   } > "$FORGE_DIR/AGENTS.md"
-  ln -sfn AGENTS.md "$FORGE_DIR/CLAUDE.md"
 
   printf '# Status\n\n**Last updated:** %s\n\n## In progress\n_Nothing yet._\n\n## Blocked\n_Nothing._\n\n## Up next\n_See Steps.md._\n\n## Recently completed\n_Nothing yet._\n' \
     "$(date +%Y-%m-%d)" > "$FORGE_DIR/STATUS.md"

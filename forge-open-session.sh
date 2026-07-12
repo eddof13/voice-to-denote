@@ -77,8 +77,8 @@ AGENT_NAME="${AGENT_SPEC%%|*}"
 AGENT_BIN="${AGENT_SPEC#*|}"
 
 PROJECT_PATH="$FORGE_DIR/$CHOICE"
-# Model-agnostic session start — AGENTS.md is canonical; CLAUDE.md is a symlink.
-SESSION_PROMPT="Project: ${CHOICE}. Read AGENTS.md (or CLAUDE.md — same file), then STATUS. Where did we leave off?"
+# Agent-agnostic session start — AGENTS.md only (no CLAUDE.md / no symlinks).
+SESSION_PROMPT="Project: ${CHOICE}. Read AGENTS.md, then STATUS. Where did we leave off?"
 
 # Set the KM variable directly — no stdout, no results window
 osascript -e "tell application \"Keyboard Maestro Engine\" to setvariable \"ForgeProject\" to \"${CHOICE}\"" > /dev/null 2>&1

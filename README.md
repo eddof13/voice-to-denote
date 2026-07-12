@@ -98,4 +98,4 @@ Record a voice note on your phone and save it to your synced folder. When it lan
 - Audio files move to `~/voice_notes/processed/` after success; failures stay in `.processing` for the sweeper
 - Whisper occasionally mishears proper nouns; the LLM usually corrects from context
 - Denote directory is hardcoded to `~/notes` — edit `NOTES_DIR` in `voice-to-denote.sh` to change it
-- New forge projects get `AGENTS.md` plus a `CLAUDE.md` → `AGENTS.md` symlink (model-agnostic Operator's Forge layout)
+- New forge projects get a single real `AGENTS.md` pointer (agent-agnostic Operator's Forge layout; no `CLAUDE.md`, no symlinks — MegaSync)
